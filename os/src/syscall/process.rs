@@ -41,11 +41,11 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
 // TODO: implement the syscall
 pub fn sys_trace(trace_request: usize, id: usize, data: usize) -> isize {
     match trace_request {
-        0 => unsafe{
+        0 => unsafe{ //自己实现错误,由claude纠正
             let value = *(id as *const u8);
             return value as isize;
         }
-        1 => unsafe {
+        1 => unsafe { //自己实现错误,由claude纠正
             let addr = id as *mut u8;
             *addr = data as u8;
             return 0 as isize;
