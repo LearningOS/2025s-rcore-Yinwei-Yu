@@ -17,11 +17,12 @@ mod task;
 use crate::config::MAX_APP_NUM;
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use alloc::vec::Vec;
+use alloc::vec;
+pub use context::TaskContext;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
-
-pub use context::TaskContext;
 
 /// The task manager, where all the tasks are managed.
 ///
@@ -45,6 +46,8 @@ pub struct TaskManagerInner {
     tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
     current_task: usize,
+    /// times of syscall with id
+    current_syscall_times: Vec<Vec<usize>>,
 }
 
 lazy_static! {
@@ -58,6 +61,11 @@ lazy_static! {
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
             task.task_status = TaskStatus::Ready;
+        };
+        let max_syscall_id = 500;
+        let mut current_syscall_times =Vec::with_capacity(max_syscall_id);
+        for _ in 0..num_app {
+            current_syscall_times.push(vec![0;max_syscall_id]);
         }
         TaskManager {
             num_app,
@@ -65,6 +73,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    current_syscall_times
                 })
             },
         }
@@ -134,6 +143,20 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    ///add 1 to syscall with id's count
+    pub fn increment_syscall_count(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.current_syscall_times[current][syscall_id] += 1;
+    }
+
+    ///get task_syscall_count
+    pub fn get_task_syscall_count(&self, syscall_id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.current_syscall_times[current][syscall_id]
     }
 }
 
