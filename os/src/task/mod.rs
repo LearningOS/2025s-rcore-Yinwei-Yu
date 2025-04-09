@@ -15,8 +15,10 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapPermission,VirtPageNum,PageTableEntry,VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
+use alloc::vec;
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
@@ -46,6 +48,8 @@ struct TaskManagerInner {
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    ///times of syscall with id
+    current_syscall_times: Vec<Vec<usize>>,
 }
 
 lazy_static! {
@@ -58,12 +62,18 @@ lazy_static! {
         for i in 0..num_app {
             tasks.push(TaskControlBlock::new(get_app_data(i), i));
         }
+        let max_syscall_id = 500;
+        let mut current_syscall_times =Vec::with_capacity(max_syscall_id);
+        for _ in 0..num_app {
+            current_syscall_times.push(vec![0;max_syscall_id]);
+        }
         TaskManager {
             num_app,
             inner: unsafe {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    current_syscall_times
                 })
             },
         }
@@ -152,6 +162,36 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    ///add 1 to syscall with id's count
+    pub fn increment_syscall_count(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.current_syscall_times[current][syscall_id] += 1;
+    }
+
+    ///get task_syscall_count
+    pub fn get_task_syscall_count(&self, syscall_id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.current_syscall_times[current][syscall_id]
+    }
+
+    ///查询虚拟地址是否已经分配
+    pub fn get_page_table(&self,vpn: VirtPageNum) -> Option<PageTableEntry> {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].memory_set.translate(vpn)
+    }
+
+    ///为虚拟地址分配物理内存
+    pub fn create_new_map_area(&self,start_va: VirtAddr, end_va: VirtAddr, perm: MapPermission) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current]
+            .memory_set
+            .insert_framed_area(start_va, end_va, perm);
     }
 }
 
