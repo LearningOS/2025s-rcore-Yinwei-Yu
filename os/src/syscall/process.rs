@@ -1,9 +1,12 @@
 //! Process management syscalls
 use crate::{
-    config::PAGE_SIZE, mm::{translated_byte_buffer, MapPermission, VPNRange, VirtAddr}, task::{
+    config::{MEMORY_END, PAGE_SIZE},
+    mm::{translated_byte_buffer, MapPermission, PageTable, VPNRange, VirtAddr},
+    task::{
         change_program_brk, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next, TASK_MANAGER,
-    }, timer::get_time_us
+    },
+    timer::get_time_us,
 };
 
 #[repr(C)]
@@ -47,7 +50,7 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
             if total_copied >= size {
                 break;
             }
-            let src_addr = &time as *const _ as usize + total_copied;
+            let src_addr = &time as *const _ as usize + total_copied; //逐字节复制
             let byte_value = unsafe { *(src_addr as *const u8) };
             buffer[i] = byte_value;
             total_copied += 1;
@@ -60,18 +63,50 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 pub fn sys_trace(trace_request: usize, id: usize, data: usize) -> isize {
     trace!("kernel: sys_trace");
+    if id > MEMORY_END {
+        return -1;
+    }
     match trace_request {
-        0 => unsafe {
+        0 => {
             let token = current_user_token();
-            let buffers = translated_byte_buffer(token, id as *const u8, 1);
+            let addr = id as usize;
+            //检查地址是否有效
+            let page_table = PageTable::from_token(token);
+            let vpn = VirtAddr::from(addr).floor();
+
+            if let Some(pte) = page_table.translate(vpn) {
+                if !pte.is_valid() || !pte.readable() {
+                    //页表项无效或不可读
+                    return -1;
+                }
+            } else {
+                return -1; //地址无效
+            }
+
+            //读取操作
+            let buffers = translated_byte_buffer(token, addr as *const u8, 1);
             if buffers.is_empty() {
                 return -1;
             }
-            let value = *(id as *const u8);
+            let value = buffers[0][0];
             return value as isize;
-        },
+        }
         1 => {
             let token = current_user_token();
+            let addr = id as usize;
+
+            let page_table = PageTable::from_token(token);
+            let vpn = VirtAddr::from(addr).floor();
+            if let Some(pte) = page_table.translate(vpn) {
+                if !pte.is_valid() || !pte.writable() {
+                    //不可写
+                    return -1;
+                }
+            } else {
+                return -1; //地址无效
+            }
+
+            //写入
             let mut buffers = translated_byte_buffer(token, id as *const u8, 1);
             if buffers.is_empty() {
                 return -1;
@@ -80,6 +115,7 @@ pub fn sys_trace(trace_request: usize, id: usize, data: usize) -> isize {
             return 0 as isize;
         }
         2 => {
+            //查询系统调用次数
             return TASK_MANAGER.get_task_syscall_count(id) as isize;
         }
         _ => -1,
@@ -91,7 +127,7 @@ pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
     //没有按页对齐
     if start % PAGE_SIZE != 0 {
         return -1;
-    }
+    } 
     //高位不为0
     if (prot & !0x7) != 0 {
         return -1;
@@ -114,18 +150,18 @@ pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
 
     //获取虚拟地址起止位置
     let start_vpn = VirtAddr::from(start).floor();
-    let end_vpn = VirtAddr::from(start+len).ceil();
+    let end_vpn = VirtAddr::from(start + len).ceil();
 
-    //检查vpn是否已经非配
+    //检查vpn是否已经分配
     let vpns = VPNRange::new(start_vpn, end_vpn);
     for vpn in vpns {
-        if let Some(pte)  = TASK_MANAGER.get_page_table(vpn) {
+        if let Some(pte) = TASK_MANAGER.get_page_table(vpn) {
             if pte.is_valid() {
                 return -1;
             }
         }
     }
-    
+
     //转换为虚拟地址
     let start_va = start.into();
     let end_va = end_vpn.into();
@@ -135,9 +171,19 @@ pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
 }
 
 // YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
-    -1
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    //错误检查
+    if start % PAGE_SIZE != 0 {
+        return -1;
+    }
+    if len == 0 {
+        return 0;
+    }
+    if start >= MEMORY_END {
+        return -1;
+    }
+    //参考了荣誉准则中提到的资料内容
+    TASK_MANAGER.remove_map(start, len)
 }
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {

@@ -15,7 +15,7 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
-use crate::mm::{MapPermission,VirtPageNum,PageTableEntry,VirtAddr};
+use crate::mm::{MapPermission, PageTableEntry, VPNRange, VirtAddr, VirtPageNum};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec;
@@ -192,6 +192,26 @@ impl TaskManager {
         inner.tasks[current]
             .memory_set
             .insert_framed_area(start_va, end_va, perm);
+    }
+
+    ///取消映射
+    pub fn remove_map(&self,start:usize,len:usize)->isize {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let start_vpn = VirtAddr::from(start).floor();
+        let end_vpn = VirtAddr::from(start+len).ceil();
+        let vpns = VPNRange::new(start_vpn, end_vpn);
+        for vpn in vpns {
+            if let Some(pte) = inner.tasks[current].memory_set.translate(vpn) {
+                if !pte.is_valid() {
+                    return -1;
+                }
+                inner.tasks[current].memory_set.get_page_table().unmap(vpn);
+            } else {
+                return -1;
+            }
+        }
+        0
     }
 }
 
