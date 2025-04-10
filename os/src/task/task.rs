@@ -3,7 +3,7 @@ use super::{add_task, current_task, get_app_data_by_name, TaskContext};
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
 use crate::config::TRAP_CONTEXT_BASE;
 use crate::fs::{File, Stdin, Stdout};
-use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use crate::mm::{translated_str,MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
@@ -18,10 +18,8 @@ pub struct TaskControlBlock {
     // Immutable
     /// Process identifier
     pub pid: PidHandle,
-
     /// Kernel stack corresponding to PID
     pub kernel_stack: KernelStack,
-
     /// Mutable
     inner: UPSafeCell<TaskControlBlockInner>,
 }
@@ -71,6 +69,10 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+    /// stride
+    pub stride: usize,
+    /// priority
+    pub priority: usize,
 }
 
 impl TaskControlBlockInner {
@@ -135,6 +137,8 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    stride: 0,
+                    priority: 16,
                 })
             },
         };
@@ -216,6 +220,8 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    stride: 0,
+                    priority: 16,
                 })
             },
         });
@@ -232,9 +238,9 @@ impl TaskControlBlock {
     }
 
     ///parent process spawn a child process and run its task
-    pub fn spawn(&self,path: *const u8) -> isize {
+    pub fn spawn(&self, path: *const u8) -> isize {
         //get elf data
-        
+
         let mut parent_inner = self.inner_exclusive_access();
         let token = parent_inner.get_user_token();
         let path = translated_str(token, path);
@@ -267,6 +273,8 @@ impl TaskControlBlock {
                         fd_table:parent_inner.fd_table,
                         heap_bottom: parent_inner.heap_bottom,
                         program_brk: parent_inner.program_brk,
+                        stride: 0,
+                        priority: 16,
                     })
                 },
             });
