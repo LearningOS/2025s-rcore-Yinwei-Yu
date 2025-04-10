@@ -6,9 +6,11 @@ use crate::{
     fs::{open_file, OpenFlags},
     mm::{translated_refmut, translated_str},
     task::{
-        add_task, current_task, current_user_token, exit_current_and_run_next,
+        add_task, create_new_map_area, current_task, current_user_token, exit_current_and_run_next,
+        get_current_page_table,remove_map_area,
         suspend_current_and_run_next,
     },
+    timer::get_time_ms,
 };
 
 #[repr(C)]
@@ -105,30 +107,95 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
+    let us = get_time_ms(); //获取us时间
+    let token = current_user_token();
+    //创建当前时间结构体
+    let time = TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    };
+    let size = core::mem::size_of::<TimeVal>(); //获得一个结构体的大小用于获得用户空间中相同大小的空间
+    let buffers = translated_byte_buffer(token, ts as *const u8, size);
+    let mut total_copied = 0;
+    for buffer in buffers {
+        for i in 0..buffer.len() {
+            if total_copied >= size {
+                break;
+            }
+            let src_addr = &time as *const _ as usize + total_copied; //逐字节复制
+            let byte_value = unsafe { *(src_addr as *const u8) };
+            buffer[i] = byte_value;
+            total_copied += 1;
+        }
+    }
+    0
 }
 
 /// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
+    //没有按页对齐
+    if start % PAGE_SIZE != 0 {
+        return -1;
+    }
+    if start >= MEMORY_END {
+        return -1;
+    }
+    //高位不为0
+    if (prot & !0x7) != 0 {
+        return -1;
+    } else if prot & 0x7 == 0 {
+        //无意义内存
+        return -1;
+    }
+
+    //设置内存属性
+    let mut permission = MapPermission::U;
+    if (prot & 1) != 0 {
+        permission |= MapPermission::R;
+    } //可读
+    if (prot & 2) != 0 {
+        permission |= MapPermission::W;
+    } //可写
+    if (prot & 4) != 0 {
+        permission |= MapPermission::X;
+    } //可执行
+
+    //获取虚拟地址起止位置
+    let start_vpn = VirtAddr::from(start).floor();
+    let end_vpn = VirtAddr::from(start + len).ceil();
+
+    //检查vpn是否已经分配
+    let vpns = VPNRange::new(start_vpn, end_vpn);
+    for vpn in vpns {
+        if let Some(pte) = get_current_page_table(vpn) {
+            if pte.is_valid() {
+                return -1;
+            }
+        }
+    }
+
+    //转化为虚拟地址
+    let start_va = start.into();
+    let end_va = end_vpn.into();
+    create_new_map_area(start_va, end_va, permission);
+    0
 }
 
 /// YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    //错误检查
+    if start % PAGE_SIZE != 0 {
+        return -1;
+    }
+    if len == 0 {
+        return 0;
+    }
+    if start >= MEMORY_END {
+        return -1;
+    }
+    //移除映射关系
+    remove_map_area(start, len)
 }
 
 /// change data segment size
@@ -143,12 +210,9 @@ pub fn sys_sbrk(size: i32) -> isize {
 
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
-pub fn sys_spawn(_path: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_spawn(path: *const u8) -> isize {
+    let task = current_task().unwrap();
+    task.spawn(path)
 }
 
 // YOUR JOB: Set task priority.

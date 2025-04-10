@@ -7,6 +7,7 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::mm::{MapPermission, PageTableEntry, VPNRange, VirtAddr, VirtPageNum};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
@@ -108,4 +109,43 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+///Get current task's page table
+pub fn get_current_page_table(vpn: VirtPageNum) -> Option<PageTableEntry> {
+    if let Some(current_task) = current_task() {
+        current_task
+            .inner_exclusive_access()
+            .memory_set
+            .translate(vpn)
+    } else {
+        None
+    }
+}
+
+///create a new map area between a virtual add and physics area
+pub fn create_new_map_area(start_va: VirtAddr, end_va: VirtAddr, perm: MapPermission) {
+    current_task()
+        .unwrap()
+        .inner_exclusive_access()
+        .memory_set
+        .insert_framed_area(start_va, end_va, perm);
+}
+
+///remove the map from virtual add with start
+pub fn remove_map_area(start:usize,len:usize)->isize {
+    let start_vpn = VirtAddr::from(start).floor();
+    let end_vpn = VirtAddr::from(start+len).ceil();
+    let vpns = VPNRange::new(start_vpn, end_vpn);
+    for vpn in vpns {
+        if let Some(pte) = get_current_page_table(vpn) {
+            if !pte.is_valid() {
+                return -1;
+            }
+            current_task().unwrap().inner_exclusive_access().memory_set.remove_area_with_start_vpn(vpn);
+        } else {
+            return -1;
+        }
+    }
+    0
 }
