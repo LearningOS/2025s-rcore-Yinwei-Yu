@@ -4,13 +4,14 @@ use alloc::sync::Arc;
 
 use crate::{
     fs::{open_file, OpenFlags},
-    mm::{translated_refmut, translated_str},
+    mm::{translated_refmut, translated_str,translated_byte_buffer,VPNRange,VirtAddr,MapPermission},
     task::{
         add_task, create_new_map_area, current_task, current_user_token, exit_current_and_run_next,
         get_current_page_table,remove_map_area,
         suspend_current_and_run_next,
     },
     timer::get_time_us,
+    config::{PAGE_SIZE,MEMORY_END}
 };
 
 #[repr(C)]

@@ -1,8 +1,8 @@
 //! Types related to task management & Functions for completely changing TCB
-use super::{add_task, current_task, get_app_data_by_name, TaskContext};
+use super::{add_task, current_task,TaskContext};
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
 use crate::config::TRAP_CONTEXT_BASE;
-use crate::fs::{File, Stdin, Stdout};
+use crate::fs::{open_file, File, OpenFlags, Stdin, Stdout};
 use crate::mm::{translated_str,MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
@@ -244,9 +244,10 @@ impl TaskControlBlock {
         let mut parent_inner = self.inner_exclusive_access();
         let token = parent_inner.get_user_token();
         let path = translated_str(token, path);
-        if let Some(elf_data) = get_app_data_by_name(path.as_str()) {
+        if let Some(app_node) = open_file(path.as_str(),OpenFlags::RDONLY) {
             //get app data from elf
-            let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
+            let elf_data = app_node.read_all();
+            let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data.as_slice());
             //get trap context
             let trap_cx_ppn = memory_set
                 .translate(VirtAddr::from(TRAP_CONTEXT_BASE).into())
@@ -256,6 +257,15 @@ impl TaskControlBlock {
             let pid_handle = pid_alloc();
             let kernel_stack = kstack_alloc();
             let kernel_stack_top = kernel_stack.get_top();
+            //copy fd table
+            let mut new_fd_table : Vec<Option<Arc<dyn File+Send+Sync>>> = Vec::new();
+            for fd in parent_inner.fd_table.iter() {
+                if let Some(file) = fd {
+                    new_fd_table.push(Some(file.clone()));
+                } else {
+                    new_fd_table.push(None);
+                }
+            }
             //create a new task control block
             let task_control_block = Arc::new(TaskControlBlock {
                 pid: pid_handle,
@@ -270,7 +280,7 @@ impl TaskControlBlock {
                         parent: Some(Arc::downgrade(&current_task().unwrap())),
                         children: Vec::new(),
                         exit_code: 0,
-                        fd_table:parent_inner.fd_table,
+                        fd_table:new_fd_table,
                         heap_bottom: parent_inner.heap_bottom,
                         program_brk: parent_inner.program_brk,
                         stride: 0,
