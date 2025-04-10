@@ -13,7 +13,7 @@ use crate::{
         get_current_page_table,remove_map_area,
         suspend_current_and_run_next,
     },
-    timer::get_time_ms,
+    timer::get_time_us,
 };
 
 #[repr(C)]
@@ -116,7 +116,7 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
-    let us = get_time_ms(); //获取us时间
+    let us = get_time_us(); //获取us时间
     let token = current_user_token();
     //创建当前时间结构体
     let time = TimeVal {
@@ -224,10 +224,12 @@ pub fn sys_spawn(path: *const u8) -> isize {
 }
 
 // YOUR JOB: Set task priority.
-pub fn sys_set_priority(_prio: isize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_set_priority(prio: isize) -> isize {
+    if prio<2 {
+        return -1;
+    }
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    inner.priority=prio as usize;
+    prio
 }
