@@ -1,10 +1,11 @@
 use crate::{
     fs::{open_file, OpenFlags},
-    mm::{translated_ref, translated_refmut, translated_str},
+    mm::{translated_ref, translated_refmut, translated_str,translated_byte_buffer},
     task::{
         current_process, current_task, current_user_token, exit_current_and_run_next, pid2process,
         suspend_current_and_run_next, SignalFlags,
     },
+    timer::get_time_us
 };
 use alloc::{string::String, sync::Arc, vec::Vec};
 
@@ -151,12 +152,33 @@ pub fn sys_kill(pid: usize, signal: u32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
         current_task().unwrap().process.upgrade().unwrap().getpid()
     );
-    -1
+    let us = get_time_us(); //获取us时间
+    let token = current_user_token();
+    //创建当前时间结构体
+    let time = TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    };
+    let size = core::mem::size_of::<TimeVal>(); //获得一个结构体的大小用于获得用户空间中相同大小的空间
+    let buffers = translated_byte_buffer(token, ts as *const u8, size);
+    let mut total_copied = 0;
+    for buffer in buffers {
+        for i in 0..buffer.len() {
+            if total_copied >= size {
+                break;
+            }
+            let src_addr = &time as *const _ as usize + total_copied; //逐字节复制
+            let byte_value = unsafe { *(src_addr as *const u8) };
+            buffer[i] = byte_value;
+            total_copied += 1;
+        }
+    }
+    0
 }
 
 /// mmap syscall

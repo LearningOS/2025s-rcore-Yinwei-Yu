@@ -49,6 +49,13 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    // 新增：是否启用死锁检测
+    pub dead_lock_detect_enabled: bool,
+    /// 新增：记录互斥锁的持有者 (mutex_id -> task_id)
+    pub mutex_holders: Vec<Option<usize>>,
+    /// 新增：记录信号量的初始计数和已分配数量
+    pub semaphore_initial_counts: Vec<usize>,
+    pub semaphore_allocations: Vec<Vec<usize>>,
 }
 
 impl ProcessControlBlockInner {
@@ -119,6 +126,11 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    // 初始化新增字段
+                    dead_lock_detect_enabled:false,
+                    mutex_holders: Vec::new(),
+                    semaphore_initial_counts: Vec::new(),
+                    semaphore_allocations: Vec::new(),
                 })
             },
         });
@@ -245,6 +257,11 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    // 初始化新增字段
+                    dead_lock_detect_enabled:false,
+                    mutex_holders: Vec::new(),
+                    semaphore_initial_counts: Vec::new(),
+                    semaphore_allocations: Vec::new(),
                 })
             },
         });

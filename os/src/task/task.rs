@@ -41,6 +41,10 @@ pub struct TaskControlBlockInner {
     pub task_status: TaskStatus,
     /// It is set when active exit or execution error occurs
     pub exit_code: Option<i32>,
+    // 新增：等待的互斥锁ID
+    pub waiting_for_mutex: Option<usize>,
+    // 新增：等待的信号量ID
+    pub waiting_for_semaphore: Option<usize>,
 }
 
 impl TaskControlBlockInner {
@@ -75,6 +79,9 @@ impl TaskControlBlock {
                     task_cx: TaskContext::goto_trap_return(kstack_top),
                     task_status: TaskStatus::Ready,
                     exit_code: None,
+                    // 初始化新增字段
+                    waiting_for_mutex: None,
+                    waiting_for_semaphore: None,
                 })
             },
         }
